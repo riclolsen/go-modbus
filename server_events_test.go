@@ -953,3 +953,57 @@ func TestServerEvents_ConnIDIsTheConnectionID(t *testing.T) {
 		t.Errorf("event id %d, ConnectionID %d", acc.ConnID, id)
 	}
 }
+
+// A tcp+tls connection that ServerConfig.ConnectionAuthorizer refuses is
+// reported as refused, with its certificate and the authorizer's error, and
+// not as closed; one whose authorizer calls Stop is reported closed.
+func TestServerEvents_ConnectionAuthorizer(t *testing.T) {
+	errDenied := errors.New("issuer not pinned")
+	c := &evCollector{}
+	dev := e2eNewDevice()
+	p := e2eStart(t, "tcp+tls", dev, e2eOpts{noOpen: true, server: chain(eventsOn(c), func(conf *ServerConfig) {
+		conf.ConnectionAuthorizer = ConnectionAuthorizerFunc(func(context.Context, TLSHandshakeInfo) error { return errDenied })
+	}), client: func(conf *Config) { conf.Timeout = time.Second }})
+	if err := p.client.Open(); err == nil {
+		_, _ = p.client.ReadHoldingRegister(t.Context(), e2eUnit, 1)
+	}
+	e := c.wait(t, secevent.KindConnUnexpected)
+	acc := c.wait(t, secevent.KindConnAccepted)
+	if e.Action != secevent.ActionRejected || e.ConnID != acc.ConnID || !errors.Is(e.Err, errDenied) ||
+		e.Peer.TLS == nil || e.Peer.TLS.Subject == "" || !strings.Contains(e.Detail, "ConnectionAuthorizer") {
+		t.Errorf("refusal %+v (accepted %+v)", e, acc)
+	}
+	e2eEventually(t, "the slot to be freed", func() bool { return p.conns() == 0 })
+	for _, x := range c.snapshot() {
+		if x.Kind == secevent.KindConnClosed && x.ConnID == acc.ConnID {
+			t.Errorf("the refused connection was also reported closed: %+v", x)
+		}
+	}
+
+	// Stop from the authorizer
+	c2 := &evCollector{}
+	stopped := make(chan error, 1)
+	var p2 *e2ePair
+	p2 = e2eStart(t, "tcp+tls", e2eNewDevice(), e2eOpts{noOpen: true, server: chain(eventsOn(c2), func(conf *ServerConfig) {
+		conf.ConnectionAuthorizer = ConnectionAuthorizerFunc(func(context.Context, TLSHandshakeInfo) error {
+			stopped <- p2.server.Stop()
+			return nil
+		})
+	}), client: func(conf *Config) { conf.Timeout = time.Second }})
+	if err := p2.client.Open(); err == nil {
+		_, _ = p2.client.ReadHoldingRegister(t.Context(), e2eUnit, 1)
+	}
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(e2eWait):
+		t.Fatal("Stop from the authorizer did not return")
+	}
+	acc2 := c2.wait(t, secevent.KindConnAccepted)
+	closed := c2.wait(t, secevent.KindConnClosed)
+	if closed.ConnID != acc2.ConnID || c2.count(secevent.KindConnClosed) != 1 {
+		t.Errorf("after Stop from the authorizer: %v", c2.kinds())
+	}
+}

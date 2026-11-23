@@ -1,17 +1,17 @@
 # go-modbus Releases
 
-## v1.23.0
+## v1.24.0
 
 **Date:** 2026-11-23
-**Previous release:** v1.22.0
+**Previous release:** v1.23.0
 
-A server can report what it observes about its connections as structured security events for a SIEM or an audit log: who connected, which connections it refused and why, how each one ended. The events carry the connection's `ConnectionID` (v1.22.0), so they line up with the metrics hooks. This work was first released in the `riclolsen/go-modbus` fork as v1.21.0 and v1.21.1 (not upstream releases) and is merged here on top of v1.22.0. No exported identifier is removed or changed, and no default changes: a server without `ServerConfig.Security` behaves as in v1.22.0, and with it the server only observes.
+A server can report what it observes about its connections as structured security events for a SIEM or an audit log: who connected, which connections it refused and why, how each one ended. The events carry the connection's `ConnectionID` (v1.22.0), so they line up with the metrics hooks. This work was first released in the `riclolsen/go-modbus` fork as v1.21.0, v1.21.1 and v1.23.0 (not upstream releases; the fork's v1.23.0 is not upstream's) and is merged here on top of upstream v1.23.0. No exported identifier is removed or changed, and no default changes: a server without `ServerConfig.Security` behaves as in v1.23.0, and with it the server only observes.
 
 ### Added
 
 - Package `secevent`: `Event` (kind, category, severity, action, peer, connection id, protocol fields, detail, error, raw bytes, MITRE ATT&CK for ICS hint; `String` and a stable JSON form), the kind catalogue (`Kinds`, `Describe`, `KindInfo`), `Dispatcher` (non-blocking queue; merging of repeats inside a window, per peer host for the connection kinds, `KindInfo.MergeByPeer`, with a timer only while a window is open; counted drops announced by `meta.events_dropped`; a sink that panics reported once; `Close` that may be called from the sink), `Stats`, `Policy`, and the sinks `SinkFunc`, `NewChannelSink`, `NewJSONLinesSink`, `MultiSink`, `FilterSink` and `LoggerSink`. `secevent.Report` and `secevent.PeerFromContext` give a handler the peer of its connection and a way to report events of its own. `secevent.NextConnID` draws from the counter of `ConnectionID`.
-- `ServerConfig.Security` (a `*SecurityPolicy`, which embeds `secevent.Policy`) and `Server.SecurityStats`. Events: `conn.accepted`, `conn.unexpected` (`AllowClient`), `conn.rejected_limit` (`MaxClients`, `MaxClientsPerHost`), `tls.handshake_evicted`, `conn.no_request` (closed, reset, or idled out, `FirstRequestTimeout` included, without a request), `conn.idle_timeout`, `proto.bad_mbap`, `proto.bad_pdu`, `dos.write_stall` (a response write that ran out of `Timeout`), `conn.closed` and `conn.accept_error`. On `tcp+tls` the peer carries the client certificate (subject, issuer, serial, expiry, SHA-256 fingerprint, each event its own copy) and the Modbus role.
-- Every `conn.accepted` is followed by exactly one `conn.closed` or refusal event with its `ConnectionID`: a connection whose TLS handshake failed, one accepted while the server was stopping, and one whose callback (`AllowClient`, a handler, the `Logger`, a metrics hook) called `Stop` included.
+- `ServerConfig.Security` (a `*SecurityPolicy`, which embeds `secevent.Policy`) and `Server.SecurityStats`. Events: `conn.accepted`, `conn.unexpected` (`AllowClient`, `ConnectionAuthorizer`, with the certificate and the authorizer's error), `conn.rejected_limit` (`MaxClients`, `MaxClientsPerHost`), `tls.handshake_evicted`, `conn.no_request` (closed, reset, or idled out, `FirstRequestTimeout` included, without a request), `conn.idle_timeout`, `proto.bad_mbap`, `proto.bad_pdu`, `dos.write_stall` (a response write that ran out of `Timeout`), `conn.closed` and `conn.accept_error`. On `tcp+tls` the peer carries the client certificate (subject, issuer, serial, expiry, SHA-256 fingerprint, each event its own copy) and the Modbus role.
+- Every `conn.accepted` is followed by exactly one `conn.closed` or refusal event with its `ConnectionID`: a connection whose TLS handshake failed, one accepted while the server was stopping, and one whose callback (`AllowClient`, `ConnectionAuthorizer`, a handler, the `Logger`, a metrics hook) called `Stop` included.
 - `Stop` and `Shutdown` deliver the events queued so far before they return, waiting at most 5 s for a sink that does not return (then logged), and may be called from the sink.
 
 ### Changed
@@ -25,7 +25,48 @@ A server can report what it observes about its connections as structured securit
 ### Tests
 
 - `secevent`: ordering and defaults, a slow sink never blocking `Emit` and the drops announced, merging and its bounds, per-host merging, the lazy timer, flush on close, a panicking sink (`SinkFailures`, `Delivered`), `Close` from the sink and with a context, the catalogue, the JSON form (golden), the sinks, the context reporter and its own `TLSPeer`, the policy.
-- `server_events_test.go`: each event from a real connection (served, no request, reset, refused, over the limit, idle, malformed MBAP, protocol error), a handler's context and reports, no reporter without a policy, the TLS peer, a TLS eviction keeping its connection id, a failed TLS handshake, a connection accepted while stopping, `Stop` from the sink, from `AllowClient`, from a handler and from the `Logger`, the flush and a sink that does not return, a shared dispatcher, invalid policies, the policy copied, `ServerConfig` still comparable, an accept error, the mapping of every close reason, write failures with and without a timeout.
+- `server_events_test.go`: each event from a real connection (served, no request, reset, refused, over the limit, idle, malformed MBAP, protocol error), a handler's context and reports, no reporter without a policy, the TLS peer, a TLS eviction keeping its connection id, a failed TLS handshake, a connection accepted while stopping, `Stop` from the sink, from `AllowClient`, from a handler and from the `Logger`, the flush and a sink that does not return, a shared dispatcher, invalid policies, the policy copied, `ServerConfig` still comparable, an accept error, the mapping of every close reason, write failures with and without a timeout, a connection the `ConnectionAuthorizer` refuses and `Stop` from it.
+
+---
+
+## v1.23.0
+
+**Date:** 2026-11-23
+**Previous release:** v1.22.0
+
+Closes the gaps an external review of v1.22.0 found in the server's security integration surface: a post-verification hook for mutual TLS, an event for every authorization decision, and a per-request key that joins a decision to its PDU record. All of it is additive and opt-in: no exported identifier is removed or changed, no method is added to an existing interface, and without the new settings the server behaves as before, apart from the new fields being filled in. Nothing changes on the wire. The library still reports facts and enforces what the application configures: no event dispatcher, schema, severities, detection rules or exporter. It also fixes RTU responses whose length is not in their header, which a client that ran late could cut short (under Fixed).
+
+### Added
+
+- `ServerConfig.ConnectionAuthorizer` (`ConnectionAuthorizer`, `ConnectionAuthorizerFunc`): asked once for every `tcp+tls` connection whose handshake completed and whose client chain was verified, after `TLSHandshakeMetrics.OnTLSHandshake` and before the connection is opened or any request read, with the connection's context and the handshake's `TLSHandshakeInfo` (peer certificates, verified chains, role, `RoleErr`, addresses, `ConnectionID`), parsed afresh for the call. An error refuses the connection: it is closed, logged at warning level and reported to `ConnectionMetrics.OnConnectionRejected` and `ServerConnectionMetrics` as the new `RejectNotAuthorized`, never as opened or closed. An authorizer that does not return normally refuses the connection (fail closed). It may call `Stop` or `Shutdown`; the connection is then closed unserved and nothing more is reported for it. The connection keeps its `MaxClients` slot while the authorizer runs. Setting it on a `tcp` server is a configuration error.
+- `RejectNotAuthorized` (`String`: `"not authorized"`). For it `ServerConnectionEvent.Err` matches `ErrNotAuthorized` and wraps the authorizer's error, and `Role`/`RoleErr` are set.
+- `TLSHandshakeInfo.VerifiedChains`: the chains crypto/tls verified, leaf first and root last, as copies (server and client).
+- `AuthorizationDecisionMetrics` with `AuthorizationDecisionEvent`: every decision of `ServerConfig.Authorizer`, allowed or refused, with a copy of the `AuthorizationRequest` taken before the call, the refusal error, whether the authorizer did not return normally (`Failed`) and the exception decided. It runs right after the authorizer, before the handler or `ServerMetrics.OnError`; `OnError` still carries no `ConnectionID`, which is why the event exists.
+- `RequestSeq` (the request's position on its connection, from 1, served, refused and malformed requests alike) on `AuthorizationRequest`, `ServerPDUExchange` and `ProtocolViolation` (0 for an MBAP header that could not be framed), and `TransactionID` (the request's MBAP transaction ID) on `AuthorizationRequest` and `ServerPDUExchange`. (`ConnectionID`, `RequestSeq`) identifies one request in the process and joins its decision, PDU record and violation; like `ConnectionID`, neither is a metric label.
+
+### Fixed
+
+- RTU (`rtu`, `rtuovertcp`, `rtuoverudp`): an FC43/14 Read Device Identification response is read by its structure (section 6.21: the Number Of Objects, then each object's id and length), not until the line falls quiet for t3.5. Up to v1.22.0 a client goroutine that ran more than t3.5 late inside the frame took the bytes it had for the whole frame and reported `ErrBadCRC`, because a read whose deadline has already passed reports a timeout even when bytes are waiting. t3.5 is 1.75 ms on the tunnelled framings, so a loaded host (a CI runner under the race detector) was enough. A frame that ends early is `ErrShortFrame` and one whose objects run past the 256 bytes of an RTU frame is `ErrProtocolError`, as for the other function codes.
+- RTU: FC08 responses, and FC43 responses of other MEI types, are still delimited by t3.5 of silence, since their length is not in the frame; a timeout now ends the frame only when a second read, with a fresh deadline, finds no byte either. Each such response takes up to one t3.5 longer to complete.
+
+### Changed
+
+- `examples/security_hooks` is one tcp+tls flow on an in-memory throw-away PKI: verified identity and `ConnectionID`, a connection authorizer that pins a CA and keeps a revocation list, the request decisions, the PDU and violation records joined by `RequestSeq`, and the connection's close, each turned into an application-owned audit event and delivered without blocking, with a drop count. It runs without certificate files; its test checks the trail.
+- `ConnectionMetrics.OnConnectionRejected` and `ServerConnectionRejected` run on the connection's goroutine for `RejectNotAuthorized` (on the accept loop for the other reasons, as before).
+- The callbacks that may call `Stop` or `Shutdown`, and the guarded calls, now include `ConnectionAuthorizer` and `AuthorizationDecisionMetrics`, with the same guarantees as the others.
+- The bundled `modbus-cli` is built on v1.22.0 (was v1.20.0).
+
+### Documentation
+
+- API.md (§ 3.1 the new field, § 3.6 the correlation fields and their scope, new § 3.7 "Connection authorization", § 6 `AuthorizationDecisionMetrics`, `RejectNotAuthorized`, `VerifiedChains`, the struct listings), ERRORS.md (`ErrNotAuthorized` for a refused connection, the decision's `Err`), OBSERVABILITY.md (the new interface, the callback order, "Per-request correlation"), SECURITY.md ("Connection Authorization", "Audit Records"), LIMITATIONS.md, README.md examples, docs/api. LIMITATIONS.md: RTU FC08 and the MEI types other than Read Device Identification still end at t3.5 of silence.
+
+### Tests
+
+- `server_connection_authorizer_test.go`: an allowed connection (order handshake, authorizer, opened; the verified facts and chains), a refused one (`RejectNotAuthorized` on both interfaces, the error matching `ErrNotAuthorized` and wrapping the authorizer's, no open or close, the slot freed, the handler not called), a panicking authorizer failing closed, `Stop` from the authorizer for an allow and a refusal, `Shutdown` from `OnConnectionRejected` and from `OnServerConnection` for the refusal, the info being the authorizer's copy, concurrent allowed and refused connections under `-race`, the configuration error on `tcp`.
+- `server_authorization_decision_test.go`: allowed and refused decisions with their inputs and their order against `OnRequest`, `OnResponse`, `OnError` and the PDU tap, joined to the exchanges by `ConnectionID`, `RequestSeq` and a repeated transaction ID; a silent refusal; a failed authorizer; the event's request a snapshot taken before the authorizer changed it; a panicking decision callback; `Stop` from it, allowed and refused; `ProtocolViolation.RequestSeq` equal to its exchange's, and 0 for an unframable header; per-connection sequences without gaps across concurrent connections under `-race`.
+- Existing payload tests check the new fields instead of ignoring them; `TestRejectReason_String` covers `RejectPerHostLimit` and `RejectNotAuthorized`.
+- A link that reports a timeout while bytes are waiting, at every read of a frame in turn, for FC43/14 (with and without objects), another MEI type and FC08; FC43/14 frames cut short, oversized, corrupted, followed by more bytes, and interrupted while in flight; FC43/14 seeds with several objects and with another MEI type in `FuzzHostileRTUResponse`.
+- Chaos soak (`TestChaosMonkey`, the nightly `make soak`): a scenario that corrupts unit IDs in both directions accepts Illegal Function. The proxy could corrupt the unit of a request, which the test device answers with Illegal Function, and then corrupt the unit of that answer back to the one requested; the client then holds a well-formed exception for its own request, which it cannot tell apart. The nightly run of 2026-11-23 failed on it (seed 2272165658, which now passes).
 
 ---
 
