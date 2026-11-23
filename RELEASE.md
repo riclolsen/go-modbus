@@ -1,5 +1,26 @@
 # go-modbus Releases
 
+## v1.24.1
+
+**Date:** 2026-11-23
+**Previous release:** v1.24.0
+
+Brings in upstream v1.23.1: the interop reference images move to otfabric/modbus-interop v0.4.2, and docs/FEATURE-STATUS.md is brought up to date. The library is unchanged from v1.24.0.
+
+### Changed
+
+- CI of the fork: `nightly.yml` no longer has an empty top-level `env`, which GitHub rejected (the nightly runs did not start since the `OTFABRIC_READ_TOKEN` steps were removed).
+
+### Tests
+
+- Interop runs against modbus-interop v0.4.2 (was v0.4.1), pinned by the same digests in `interop/harness.go`, the Makefile and the Interop workflow (see upstream v1.23.1 below).
+
+### Documentation
+
+- README, INTEROPERABILITY.md and docs/FEATURE-STATUS.md as in upstream v1.23.1.
+
+---
+
 ## v1.24.0
 
 **Date:** 2026-11-23
@@ -26,6 +47,28 @@ A server can report what it observes about its connections as structured securit
 
 - `secevent`: ordering and defaults, a slow sink never blocking `Emit` and the drops announced, merging and its bounds, per-host merging, the lazy timer, flush on close, a panicking sink (`SinkFailures`, `Delivered`), `Close` from the sink and with a context, the catalogue, the JSON form (golden), the sinks, the context reporter and its own `TLSPeer`, the policy.
 - `server_events_test.go`: each event from a real connection (served, no request, reset, refused, over the limit, idle, malformed MBAP, protocol error), a handler's context and reports, no reporter without a policy, the TLS peer, a TLS eviction keeping its connection id, a failed TLS handshake, a connection accepted while stopping, `Stop` from the sink, from `AllowClient`, from a handler and from the `Logger`, the flush and a sink that does not return, a shared dispatcher, invalid policies, the policy copied, `ServerConfig` still comparable, an accept error, the mapping of every close reason, write failures with and without a timeout, a connection the `ConnectionAuthorizer` refuses and `Stop` from it.
+
+---
+
+## v1.23.1
+
+**Date:** 2026-11-23
+**Previous release:** v1.23.0
+
+Moves the interop reference images to otfabric/modbus-interop v0.4.2 and builds the bundled `modbus-cli` on v1.23.0. The library is unchanged from v1.23.0.
+
+### Changed
+
+- The bundled `modbus-cli` is built on v1.23.0 (was v1.22.0).
+
+### Tests
+
+- Interop runs against modbus-interop v0.4.2 (was v0.4.1), pinned by the multi-arch index digests of its release manifest in `interop/harness.go`, the Makefile and the Interop workflow. The images are built from the same upstream versions as v0.4.1 (libmodbus v3.2.0, PyModbus 3.16.1, digitalpetri/modbus 2.1.6, NModbus 3.0.83, tokio-modbus 0.17.0, j2mod 3.4.0, jsmodbus 5.0.0, modbus-esp8266 4.1.1) and the container contract is still 1.2; v0.4.2 changes only how modbus-interop checks and publishes its pins.
+
+### Documentation
+
+- README and INTEROPERABILITY.md name modbus-interop v0.4.2, and INTEROPERABILITY.md links its COMPATIBILITY.md at v0.4.2.
+- docs/FEATURE-STATUS.md was still at v1.16.0. It now names v1.23.1 and modbus-interop v0.4.2, lists j2mod, jsmodbus, modbus-esp8266 and modbus4j as independent peers over Modbus TCP and, for the client, over RTU over TCP and Modbus UDP, and has rows for the function code allowlist, the opt-in server hardening, request and connection authorization, security observability and connection identity.
 
 ---
 
