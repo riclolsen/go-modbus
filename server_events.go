@@ -211,6 +211,23 @@ func (ms *Server) emitClosedOnce(run *serverRun, ce *connEvents, reason CloseRea
 		reason, time.Since(ce.started).Round(time.Millisecond), n))
 }
 
+// emitNotAuthorized reports a tcp+tls connection that
+// ServerConfig.ConnectionAuthorizer refused after its handshake: the refusal
+// of the connection, with its certificate and the authorizer's error.
+func (ms *Server) emitNotAuthorized(run *serverRun, ce *connEvents, err error) {
+	if ce == nil {
+		return
+	}
+	ce.end.do(func() {
+		e := ce.rep.Base()
+		e.Kind = secevent.KindConnUnexpected
+		e.Action = secevent.ActionRejected
+		e.Detail = "refused by ServerConfig.ConnectionAuthorizer"
+		e.Err = err
+		run.emit(e)
+	})
+}
+
 // emitUnserved reports the end of an accepted connection that was never
 // served: one whose TLS handshake failed, or one accepted while the server was
 // stopping. With it, every conn.accepted is followed by one conn.closed or one
